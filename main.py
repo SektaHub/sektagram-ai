@@ -8,8 +8,8 @@ import services.image_captioning as image_captioning
 
 app = FastAPI()
 
-@app.post("/uploadfile/")
-async def create_upload_file(file: UploadFile = File(...)):
+@app.post("/api/generateCaptionFromUpload/")
+async def generate_caption_from_upload(file: UploadFile = File(...)):
     try:
         # Open the uploaded image and convert it to RGB
         img = Image.open(BytesIO(await file.read())).convert('RGB')
@@ -21,11 +21,24 @@ async def create_upload_file(file: UploadFile = File(...)):
     except Exception as e:
         raise HTTPException(status_code=500, detail=f"Error processing the image: {str(e)}")
 
+@app.post("/api/generateCaptionFromLink/")
+async def generate_caption_from_link(image_link: str):
+    try:
+        # Download the image from the link and convert it to RGB
+        img = Image.open(requests.get(image_link, stream=True).raw).convert('RGB')
+
+        # Generate caption for the image
+        caption = image_captioning.generate_caption(img)
+
+        return {"image_link": image_link, "caption": caption}
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=f"Error processing the image from the link: {str(e)}")
+
 @app.get("/")
 async def main():
     content = """
     <body>
-    <form action="/uploadfile/" enctype="multipart/form-data" method="post">
+    <form action="/api/generateCaptionFromUpload/" enctype="multipart/form-data" method="post">
     <input type="file" name="file" accept="image/*">
     <input type="submit" value="Upload Image">
     </form>

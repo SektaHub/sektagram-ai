@@ -5,6 +5,7 @@ import requests
 from io import BytesIO
 
 import services.image_captioning as image_captioning
+import services.sentence_embeddings as sentence_embeddings
 
 app = FastAPI()
 
@@ -33,6 +34,13 @@ async def generate_caption_from_link(image_link: str):
         return {"image_link": image_link, "caption": caption}
     except Exception as e:
         raise HTTPException(status_code=500, detail=f"Error processing the image from the link: {str(e)}")
+
+
+@app.post("/api/embed_sentence")
+async def embed_sentence(sentence: str):
+    embedding = sentence_embeddings.embed_sentence(sentence)
+    return {"embedding": embedding}
+
 
 @app.get("/")
 async def main():

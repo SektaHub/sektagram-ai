@@ -1,5 +1,5 @@
-
-from transformers import AutoProcessor, Blip2ForConditionalGeneration, BlipProcessor, BlipForConditionalGeneration
+#from transformers import AutoProcessor, Blip2ForConditionalGeneration
+from transformers import BlipProcessor, BlipForConditionalGeneration
 import torch
 
 device = "cuda" if torch.cuda.is_available() else "cpu"

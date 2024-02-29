@@ -4,9 +4,10 @@ from pydantic import BaseModel
 from PIL import Image
 import requests
 from io import BytesIO
+from typing import Any, Dict
 
 import services.image_captioning as image_captioning
-import services.sentence_embeddings as sentence_embeddings
+import services.clip_embedding as clip_embedding
 
 app = FastAPI()
 
@@ -30,6 +31,20 @@ async def generate_caption_from_upload(file: UploadFile = File(...)):
     except Exception as e:
         raise HTTPException(status_code=500, detail=f"Error processing the image: {str(e)}")
 
+
+@app.post("/api/generateEmbedFromUpload/")
+async def generate_embedding_from_upload(file: UploadFile = File(...)):
+    try:
+        img = Image.open(BytesIO(await file.read())).convert('RGB')
+
+        embedding = clip_embedding.embed_image(img)
+        # Convert the tensor to a list for serialization
+        embedding_list = embedding.cpu().numpy().tolist()[0]  # Move to CPU if not already and convert to list
+
+        return {"filename": file.filename, "embedding": embedding_list}
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=f"Error processing the image: {str(e)}")
+
 @app.post("/api/generateCaptionFromLink/")
 async def generate_caption_from_link(image_link: str):
     try:
@@ -48,72 +63,58 @@ async def generate_caption_from_link(image_link: str):
 async def embed_sentence(sentence_input: SentenceInput):
     try:
         sentence = sentence_input.sentence
-        embedding = sentence_embeddings.embed_sentence(sentence)
+        embedding = clip_embedding.embed_sentence(sentence)
         return {"embedding": embedding}
     except Exception as e:
         raise HTTPException(status_code=500, detail=f"Error processing sentence: {str(e)}")
 
 
-# FastAPI endpoint to generate captions for images without captions from .NET backend
 @app.post("/api/generateCaptionsForImagesWithoutCaption")
 async def generate_captions_for_images_without_caption():
     try:
-        # Get the list of images without captions from the .NET backend
         dotnet_endpoint_url = f"{dotnet_backend_url}/Image/GetImagesWithoutCaption"
         response = requests.get(dotnet_endpoint_url)
+        if not response.ok:
+            raise ValueError("Failed to fetch images without captions from .NET backend.")
         image_list = response.json()
 
-        # Iterate through the images and generate captions
         captions = []
         for image in image_list:
             image_id = image["id"]
             image_url = f"{dotnet_backend_url}/Image/{image_id}/Content"
 
-            # Download the image from the .NET backend
             image_response = requests.get(image_url, stream=True)
             if image_response.status_code == 200:
-                # Convert the image to RGB
                 img = Image.open(BytesIO(image_response.content)).convert('RGB')
-
-                # Generate caption for the image
                 new_caption = image_captioning.generate_caption(img)
+                embed = clip_embedding.embed_image(img)
+                embedding_list = embed.cpu().numpy().tolist()[0]
+                print(embedding_list)
 
-                # Generate CaptionEmbedding
-                caption_embedding = sentence_embeddings.embed_sentence(new_caption)
-
-                rounded_embedding = [round(value, 8) for value in caption_embedding]
-
-                # Create JSON Patch request
                 patch_request = [
                     {"op": "replace", "path": "/generatedCaption", "value": new_caption},
                 ]
 
+                print(new_caption)
+
                 # Send JSON Patch request to .NET backend
                 patch_url = f"{dotnet_backend_url}/Image/{image_id}"
-                patch_headers = {'Content-Type': 'application/json-patch+json'}  # Ensure correct content-type header is set for patch requests
+                patch_headers = {
+                    'Content-Type': 'application/json-patch+json'}  # Ensure correct content-type header is set for patch requests
                 patch_response = requests.patch(patch_url, json=patch_request, headers=patch_headers)
 
-                embedding_patch_request = {
-                    "embedding": str(caption_embedding),
-                }
+                embedding_patch_request = {"embedding": str(embedding_list)}
+                patch_response2 = requests.patch(f"{dotnet_backend_url}/Image/{image_id}/PatchClipEmbedding", json=embedding_patch_request, headers=patch_headers)
 
-                patch_url = f"{dotnet_backend_url}/Image/{image_id}/PatchCaptionEmbedding"
-                patch_response2 = requests.patch(patch_url, json=embedding_patch_request, headers=patch_headers)
-
-                print("REQ:" + str(embedding_patch_request))
-
-                if patch_response.status_code == 204 and patch_response2.status_code == 204:
+                print(patch_response.status_code, patch_response2.status_code)
+                if patch_response.status_code == 204 and patch_response2.status_code == 200:
                     captions.append({"image_id": image_id, "caption": new_caption})
                 else:
-                    captions.append(
-                        {"image_id": image_id, "error": f"Error updating caption: {patch_response.status_code}, {patch_response2.content}"})
+                    captions.append({"image_id": image_id, "error": "Error updating caption or embedding"})
             else:
-                # Handle errors, if any
-                captions.append(
-                    {"image_id": image_id, "error": f"Error downloading image: {image_response.status_code}"})
+                captions.append({"image_id": image_id, "error": "Error downloading image"})
 
         return {"captions": captions}
-
     except Exception as e:
         raise HTTPException(status_code=500, detail=f"Error processing images: {str(e)}")
 
@@ -129,6 +130,11 @@ async def main():
         <form action="/api/generateCaptionFromUpload/" enctype="multipart/form-data" method="post">
             <input type="file" name="file" accept="image/*">
             <input type="submit" value="Upload Image">
+        </form>
+        <br>
+        <form action="/api/generateEmbedFromUpload/" enctype="multipart/form-data" method="post">
+            <input type="file" name="file" accept="image/*">
+            <input type="submit" value="Upload Image For embed">
         </form>
     </body>
     """

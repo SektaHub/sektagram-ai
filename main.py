@@ -5,9 +5,11 @@ from PIL import Image
 import requests
 from io import BytesIO
 from typing import Any, Dict
+import io
 
 import services.image_captioning as image_captioning
 import services.clip_embedding as clip_embedding
+import services.audio_transcription as audio_transcription
 
 app = FastAPI()
 
@@ -16,6 +18,60 @@ dotnet_backend_url = "http://localhost:8080/api"
 
 class SentenceInput(BaseModel):
     sentence: str
+
+
+class TranscriptionInput(BaseModel):
+    file_link: str
+
+@app.post("/api/transcribeAudioFromLink/")
+async def transcribe_audio_from_link(transcription_input: TranscriptionInput):
+    try:
+        # Download the audio file from the link
+        response = requests.get(transcription_input.file_link)
+        if response.status_code != 200:
+            raise HTTPException(status_code=500, detail=f"Failed to download audio from the link.")
+
+        # Transcribe audio
+        audio_data = response.content
+        transcription = audio_transcription.transcribe_audio_file(io.BytesIO(audio_data))
+
+        return {"transcription": transcription}
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=f"Error processing the audio from the link: {str(e)}")
+
+@app.post("/api/transcribeReels/")
+async def transcribe_reels():
+    try:
+        dotnet_endpoint_url = f"{dotnet_backend_url}/Reel/GetReelsWithoutTranscription"
+        response = requests.get(dotnet_endpoint_url)
+        if not response.ok:
+            raise ValueError("Failed to fetch images without captions from .NET backend.")
+        reel_list = response.json()
+
+        captions = []
+        for reel in reel_list:
+            reel_id = reel["id"]
+            reel_url = f"{dotnet_backend_url}/Reel/{reel_id}/Content"
+            response2 = requests.get(reel_url)
+            if response2.status_code != 200:
+                raise HTTPException(status_code=500, detail=f"Failed to download audio from the link.")
+
+            # Transcribe audio
+            audio_data = response2.content
+            transcription = audio_transcription.transcribe_audio_file(io.BytesIO(audio_data))
+            # Send JSON Patch request to .NET backend
+            patch_url = f"{dotnet_backend_url}/Reel/{reel_id}"
+            patch_request = [
+                {"op": "replace", "path": "/audioTranscription", "value": transcription},
+            ]
+            patch_headers = {
+                'Content-Type': 'application/json-patch+json'}  # Ensure correct content-type header is set for patch requests
+            patch_response = requests.patch(patch_url, json=patch_request, headers=patch_headers)
+            print(transcription)
+
+        return {"message": "ok"}
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=f"Error processing the audio from the link: {str(e)}")
 
 
 @app.post("/api/generateCaptionFromUpload/")
